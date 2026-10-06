@@ -1,0 +1,23 @@
+[Desktop Entry]
+Name=Helium Browser
+Comment=Private, fast, and honest Chromium-based web browser
+GenericName=Web Browser
+Keywords=Internet;WWW;Browser;Web;Explorer;Chromium;
+Exec=helium-browser %U
+Icon=helium-browser
+Type=Application
+MimeType=application/pdf;application/rdf+xml;application/rss+xml;application/xhtml+xml;application/xhtml_xml;application/xml;image/gif;image/jpeg;image/png;image/webp;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=helium
+Categories=Network;WebBrowser;
+StartupNotify=true
+Terminal=false
+X-MultipleArgs=false
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=helium-browser
+
+[Desktop Action new-private-window]
+Name=New Incognito Window
+Exec=helium-browser --incognito

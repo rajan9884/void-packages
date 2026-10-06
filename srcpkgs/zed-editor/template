@@ -1,0 +1,58 @@
+# Template file for 'zed-editor'
+# Binary repack of official upstream Zed tarballs, same pattern as
+# ../zen-browser (itself modeled on srcpkgs/vivaldi, srcpkgs/google-chrome,
+# srcpkgs/discord: upstream ships binaries, install to /opt, symlink /usr/bin).
+# Runtime deps mapped from Arch extra/zed
+# (alsa-lib curl fontconfig git glib2 libx11 libxcb libxkbcommon
+#  libxkbcommon-x11 sqlite vulkan-icd-loader wayland zstd nodejs).
+pkgname=zed-editor
+version=1.22.0
+revision=1
+archs="x86_64 aarch64"
+depends="alsa-lib curl fontconfig git glib hicolor-icon-theme desktop-file-utils
+ libX11 libxcb libxkbcommon libxkbcommon-x11 nodejs sqlite vulkan-loader
+ wayland xdg-utils zstd"
+short_desc="High-performance, multiplayer code editor"
+maintainer="Rajan Jaiswal <rajan.dev.jaiswal@gmail.com>"
+license="GPL-3.0-or-later, AGPL-3.0-or-later, Apache-2.0"
+homepage="https://zed.dev"
+changelog="https://github.com/zed-industries/zed/releases"
+case "$XBPS_TARGET_MACHINE" in
+x86_64)
+	distfiles="https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-x86_64.tar.gz"
+	checksum=5ce3991b34a8fad0a23625f5821cda601c7150a6cc69683c097b8d1b083abc50
+	;;
+aarch64*)
+	distfiles="https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-aarch64.tar.gz"
+	checksum=8b3c5d6e506056a9456ed33072081fd64db84ce47cdf34d4936442cc4f08394a
+	;;
+*)
+	broken="No upstream tarball for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
+	;;
+esac
+nostrip=yes
+
+do_install() {
+	# Upstream tarball extracts to a single top-level "zed.app/" dir, which
+	# xbps-src renames to $wrksrc, so app files are in $wrksrc root:
+	#   bin/zed  libexec/zed-editor  lib/ (bundled)  licenses.md
+	#   share/applications/dev.zed.Zed.desktop
+	#   share/icons/hicolor/{512x512,1024x1024}/apps/zed.png
+	# (see https://zed.dev/docs/linux and install.sh in zed repo).
+	vmkdir opt/zed-editor
+	vcopy "*" opt/zed-editor
+
+	vmkdir usr/bin
+	ln -sf /opt/zed-editor/bin/zed ${DESTDIR}/usr/bin/zed
+	ln -sf /opt/zed-editor/bin/zed ${DESTDIR}/usr/bin/zed-editor
+
+	vinstall ${FILESDIR}/zed-editor.desktop 644 usr/share/applications
+	for res in 512 1024; do
+		vinstall share/icons/hicolor/${res}x${res}/apps/zed.png 644 \
+			usr/share/icons/hicolor/${res}x${res}/apps zed-editor.png
+	done
+}
+
+post_install() {
+	vlicense licenses.md
+}

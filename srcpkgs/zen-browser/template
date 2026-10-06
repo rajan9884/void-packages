@@ -1,0 +1,50 @@
+# Template file for 'zen-browser'
+# Reference: srcpkgs/firefox/template (runtime deps, shlibs) and
+# binary-repack pattern from srcpkgs/vivaldi, srcpkgs/google-chrome,
+# srcpkgs/discord (official upstream tarballs, install to /opt).
+pkgname=zen-browser
+version=1.23b
+revision=1
+archs="x86_64 aarch64"
+depends="alsa-lib dbus-glib ffmpeg gtk+3 hicolor-icon-theme desktop-file-utils
+ libXt libnotify nss nspr pciutils xdg-utils"
+short_desc="Privacy-focused Firefox-based web browser"
+maintainer="Rajan Jaiswal <rajan.dev.jaiswal@gmail.com>"
+license="MPL-2.0"
+homepage="https://zen-browser.app"
+changelog="https://github.com/zen-browser/desktop/releases"
+case "$XBPS_TARGET_MACHINE" in
+x86_64)
+	distfiles="https://github.com/zen-browser/desktop/releases/download/${version}/zen.linux-x86_64.tar.xz"
+	checksum=9ad79f50f52a60b85f1a0787de227235934ea0bd994f79b739fa806081b3fcf0
+	;;
+aarch64*)
+	distfiles="https://github.com/zen-browser/desktop/releases/download/${version}/zen.linux-aarch64.tar.xz"
+	checksum=4774631868db53163bfecff457b9440e55cc04f24d4c3168df67722409a0bef2
+	;;
+*)
+	broken="No upstream tarball for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
+	;;
+esac
+nostrip=yes
+
+do_install() {
+	# Upstream tarball extracts to a single top-level "zen/" dir, which
+	# xbps-src renames to $wrksrc, so browser files are in $wrksrc root.
+	vmkdir opt/zen-browser
+	vcopy "*" opt/zen-browser
+
+	vmkdir usr/bin
+	ln -sf /opt/zen-browser/zen ${DESTDIR}/usr/bin/zen-browser
+
+	vinstall ${FILESDIR}/zen-browser.desktop 644 usr/share/applications
+
+	for res in 16 32 48 64 128; do
+		vinstall browser/chrome/icons/default/default${res}.png 644 \
+			usr/share/icons/hicolor/${res}x${res}/apps zen-browser.png
+	done
+
+	# Disable built-in auto-updater (updates are managed by xbps)
+	vmkdir opt/zen-browser/distribution
+	vinstall ${FILESDIR}/policies.json 644 opt/zen-browser/distribution
+}

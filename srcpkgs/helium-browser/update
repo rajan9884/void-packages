@@ -1,0 +1,2 @@
+site="https://github.com/imputnet/helium-linux/releases"
+pattern="releases/tag/\K[0-9.]+(?=\")"

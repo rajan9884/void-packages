@@ -1,0 +1,59 @@
+# Template file for 'claude-desktop'
+# Binary repack of official upstream Anthropic .deb packages, same pattern as
+# srcpkgs/google-chrome and srcpkgs/vivaldi (upstream ships a .deb, xbps-src
+# extracts it, files are installed verbatim from usr/).
+# Upstream publishes amd64/arm64 .debs in its own APT repository
+# (https://downloads.claude.ai/claude-desktop/apt/stable); checksums below
+# are the SHA256 lines from the binary-amd64 / binary-arm64 Packages indexes.
+pkgname=claude-desktop
+version=2.9939.4
+revision=1
+archs="x86_64 aarch64"
+depends="alsa-lib at-spi2-core desktop-file-utils glib gtk+3 gvfs hicolor-icon-theme
+ libXtst libdrm libnotify libsecret libuuid libxcb mesa nss xdg-desktop-portal
+ xdg-utils"
+short_desc="Desktop application for Claude.ai"
+maintainer="Rajan Jaiswal <rajan.dev.jaiswal@gmail.com>"
+license="custom:Proprietary"
+homepage="https://claude.ai"
+changelog="https://claude.ai/download"
+repository=nonfree
+restricted=yes
+nostrip=yes
+# The .deb's data.tar contains only a single top-level dir (usr/). Without
+# this, do-extract would rename that lone usr/ to $wrksrc and `vcopy usr /`
+# below would fail (same reason srcpkgs/spotify sets it).
+create_wrksrc=yes
+case "$XBPS_TARGET_MACHINE" in
+x86_64)
+	distfiles="https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_${version}_amd64.deb"
+	checksum=3cfddb23bf2911e05e27b4ed3856b8e795df94643b2c35b59deb317cf995bca0
+	;;
+aarch64*)
+	distfiles="https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_${version}_arm64.deb"
+	checksum=108ed79ea164b08c4fa0bb4387deef4779957b3f0f9b2d9898e359f363ebf1bc
+	;;
+*)
+	broken="No upstream .deb for $XBPS_TARGET_MACHINE (only amd64/arm64 are provided)"
+	;;
+esac
+
+do_install() {
+	# The .deb extracts to usr/bin/claude-desktop (symlink to
+	# ../lib/claude-desktop/claude-desktop), usr/lib/claude-desktop/
+	# (Electron app), plus desktop file, icons and docs under usr/share.
+	vcopy usr /
+
+	# Upstream ships chrome-sandbox 4755; make sure the suid bit survives.
+	# (On Ubuntu 24.04+ the .deb instead uses an AppArmor userns profile;
+	# on Void the suid fallback is what applies, same as Debian 12.)
+	chmod 4755 ${DESTDIR}/usr/lib/claude-desktop/chrome-sandbox
+
+	# Debian-only maintainer-script residue must not ship: apt repo entry,
+	# keyring handling and AppArmor profile are Ubuntu/Debian specific.
+	# (Nothing to remove from data.tar contents - postinst is not unpacked.)
+}
+
+post_install() {
+	vlicense usr/share/doc/claude-desktop/copyright
+}
