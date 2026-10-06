@@ -1,0 +1,275 @@
+#!/bin/sh
+# vp-sync - one-command sync for void-packages + custom templates.
+#
+# Lives at the root of the void-packages checkout on the `custom` branch
+# (committed, so it survives `git rebase origin/master`).
+# Replaces the old per-package srcpkgs/<pkg>/update.sh helpers.
+#
+# Usage: vp-sync [--skip-sync] [--skip-bootstrap] [--skip-build]
+#                [--skip-install] [--check-only] [pkg ...]
+#
+#   no args ......... sync official + bump/build/install all 5 customs
+#   pkg args ........ restrict to named customs (e.g. vp-sync zen-browser)
+#   --skip-sync ..... don't fetch/rebase origin/master
+#   --skip-bootstrap  don't refresh ./xbps-src binary-bootstrap
+#   --skip-build .... bump templates only, no ./xbps-src pkg
+#   --skip-install .. bump+build, no sudo xbps-install
+#   --check-only .... print template-vs-upstream versions, change nothing
+#
+# Env: XBPS_DISTDIR (defaults to this checkout's directory).
+#
+# Workflow:
+#   1. git fetch origin + rebase custom onto origin/master (official pkgs)
+#   2. refresh binary-bootstrap if common/ changed
+#   3. for each custom pkg: resolve latest upstream version (GitHub
+#      releases/latest redirect or APT Packages index), compare with
+#      template version=, patch version=/revision=/checksum= if outdated
+#   4. ./xbps-src pkg <outdated customs>
+#   5. sudo xbps-install --repository=hostdir/binpkgs[ /nonfree] <pkgs>
+
+set -eu
+
+CUSTOM_PKGS="zen-browser zed-editor helium-browser chatgpt-desktop claude-desktop"
+
+SKIP_SYNC=0
+SKIP_BOOTSTRAP=0
+SKIP_BUILD=0
+SKIP_INSTALL=0
+CHECK_ONLY=0
+PKGS=""
+
+for arg in "$@"; do
+	case "$arg" in
+		--skip-sync) SKIP_SYNC=1 ;;
+		--skip-bootstrap) SKIP_BOOTSTRAP=1 ;;
+		--skip-build) SKIP_BUILD=1 ;;
+		--skip-install) SKIP_INSTALL=1 ;;
+		--check-only) CHECK_ONLY=1 ;;
+		-h|--help)
+			sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+			echo "Custom packages: $CUSTOM_PKGS"
+			exit 0
+			;;
+		-*) echo "Unknown option: $arg (see --help)" >&2; exit 1 ;;
+		*)
+			case " $CUSTOM_PKGS " in
+				*" $arg "*) PKGS="$PKGS $arg" ;;
+				*) echo "Unknown package: $arg (one of:$CUSTOM_PKGS)" >&2; exit 1 ;;
+			esac
+			;;
+	esac
+done
+
+[ -n "$PKGS" ] || PKGS=" $CUSTOM_PKGS "
+# normalize to space-padded list for membership tests
+PKGS=" $PKGS "
+
+DISTDIR="${XBPS_DISTDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+export XBPS_DISTDIR="$DISTDIR"
+# restricted=yes templates (chatgpt/claude) need this; harmless for the rest.
+export XBPS_ALLOW_RESTRICTED=yes
+command -v curl >/dev/null || { echo "curl is required." >&2; exit 1; }
+
+# --- 1. official upstream -----------------------------------------------
+if [ "$SKIP_SYNC" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
+	if ! git -C "$DISTDIR" diff --quiet || ! git -C "$DISTDIR" diff --cached --quiet; then
+		echo "Working tree dirty in $DISTDIR; commit/stash first." >&2
+		exit 1
+	fi
+	cur_branch=$(git -C "$DISTDIR" rev-parse --abbrev-ref HEAD)
+	before=$(git -C "$DISTDIR" rev-parse HEAD)
+	git -C "$DISTDIR" fetch origin master
+	if [ "$cur_branch" = "custom" ]; then
+		git -C "$DISTDIR" rebase "origin/master" || {
+			echo "Rebase hit a conflict (likely upstream added a pkg with the" >&2
+			echo "same name as a custom — resolve, then: git rebase --continue)." >&2
+			exit 1
+		}
+	else
+		echo "On branch '$cur_branch' (not custom); skipping rebase." >&2
+	fi
+	after=$(git -C "$DISTDIR" rev-parse HEAD)
+	if [ "$SKIP_BOOTSTRAP" -eq 0 ]; then
+		if [ "$before" != "$after" ] && git -C "$DISTDIR" diff --name-only "$before" "$after" -- common/ | grep -q .; then
+			echo "common/ changed upstream; refreshing binary-bootstrap..."
+			(cd "$DISTDIR" && ./xbps-src binary-bootstrap --update)
+		fi
+	fi
+elif [ "$SKIP_BOOTSTRAP" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
+	: # --skip-sync: leave bootstrap alone unless common/ handling requested
+fi
+
+# --- shared helpers -------------------------------------------------------
+bump_version() { # $1=template $2=new_version
+	sed -i 's/^version=[a-zA-Z0-9.+]\+/version='"$2"'/' "$1"
+	sed -i 's/^revision=.*/revision=1/' "$1"
+}
+
+patch_checksums() { # $1=template $2=x86_sum $3=arm_sum
+	case "$2" in
+		????????????????????????????????????????????????????????????????) ;;
+		*) echo "Bad x86_64 checksum for $1." >&2; return 1 ;;
+	esac
+	case "$3" in
+		????????????????????????????????????????????????????????????????) ;;
+		*) echo "Bad aarch64 checksum for $1." >&2; return 1 ;;
+	esac
+	tmpfile="$1.new.$$"
+	awk -v x86="$2" -v arm="$3" '
+		/^x86_64/ { branch = "x86" }
+		/^aarch64/ { branch = "arm" }
+		/^\*\)/ { branch = "" }
+		{
+			if ($0 ~ /^[ \t]+checksum=/ && branch != "")
+				sub(/checksum=[0-9a-fA-F]+/,
+				    "checksum=" (branch == "x86" ? x86 : arm))
+			print
+		}' "$1" > "$tmpfile"
+	mv "$tmpfile" "$1"
+}
+
+# GitHub digest lookup: $1=api_url $2=x86_awk_pattern $3=arm_awk_pattern
+# prints "x86_sum arm_sum"
+github_sums() {
+	curl -sL "$1" | awk -F'"' -v xpat="$2" -v apat="$3" '
+		$2 == "name" && ($4 ~ xpat || $4 ~ apat) {
+			if ($4 ~ xpat) pending_x = $4; else pending_a = $4
+		}
+		$2 == "digest" {
+			d = $4; sub(/^sha256:/, "", d)
+			if (pending_x != "") { xsum = d; pending_x = "" }
+			else if (pending_a != "") { asum = d; pending_a = "" }
+		}
+		END { print xsum " " asum }'
+}
+
+latest_github_tag() { # $1=releases/latest url -> prints tag
+	release_url=$(curl -Ls -o /dev/null -w '%{url_effective}' "$1")
+	basename "$release_url"
+}
+
+# APT index lookup: $1=base_url $2=pkg_prefix -> prints "ver x86_sum arm_sum"
+apt_latest() {
+	base="$1"; prefix="$2"
+	amd64=$(curl -sL "$base/dists/stable/main/binary-amd64/Packages")
+	arm64=$(curl -sL "$base/dists/stable/main/binary-arm64/Packages")
+	latest_amd64=$(printf '%s\n' "$amd64" |
+		awk -v p="$prefix" '/^Version:/ { ver = $2 } $0 ~ "^Filename: .*/"p"_" { file = $2 } /^SHA256:/ { if (ver != "" && file != "") print ver " " file " " $2 }' |
+		sort -V | tail -n 1)
+	latest_arm64=$(printf '%s\n' "$arm64" |
+		awk -v p="$prefix" '/^Version:/ { ver = $2 } $0 ~ "^Filename: .*/"p"_" { file = $2 } /^SHA256:/ { if (ver != "" && file != "") print ver " " file " " $2 }' |
+		sort -V | tail -n 1)
+	ver=$(printf '%s\n' "$latest_amd64" | awk '{ print $1 }')
+	ver_arm=$(printf '%s\n' "$latest_arm64" | awk '{ print $1 }')
+	sum64=$(printf '%s\n' "$latest_amd64" | awk '{ print $3 }')
+	sumarm=$(printf '%s\n' "$latest_arm64" | awk '{ print $3 }')
+	if [ "$ver" != "$ver_arm" ]; then
+		echo "Note: amd64 ($ver) and arm64 ($ver_arm) differ; using amd64." >&2
+	fi
+	printf '%s %s %s\n' "$ver" "$sum64" "$sumarm"
+}
+
+template_version() { # $1=template -> prints version=
+	awk -F= '/^version=/ { print $2; exit }' "$1"
+}
+
+# Resolve latest version+checksums per package.
+# Sets globals: LATEST_VER, SUM_X86, SUM_ARM.
+resolve_pkg() { # $1=pkgname
+	case "$1" in
+		zen-browser)
+			tag=$(latest_github_tag "https://github.com/zen-browser/desktop/releases/latest")
+			LATEST_VER=$(printf '%s' "$tag" | sed 's/-//g')
+			api="https://api.github.com/repos/zen-browser/desktop/releases/tags/$tag"
+			set -- $(github_sums "$api" '^zen\\.linux-x86_64\\.tar\\.xz$' '^zen\\.linux-aarch64\\.tar\\.xz$')
+			SUM_X86=$1; SUM_ARM=$2
+			;;
+		zed-editor)
+			tag=$(latest_github_tag "https://github.com/zed-industries/zed/releases/latest")
+			LATEST_VER=$(printf '%s' "$tag" | sed 's/^v//')
+			api="https://api.github.com/repos/zed-industries/zed/releases/tags/$tag"
+			set -- $(github_sums "$api" '^zed-linux-x86_64\\.tar\\.gz$' '^zed-linux-aarch64\\.tar\\.gz$')
+			SUM_X86=$1; SUM_ARM=$2
+			;;
+		helium-browser)
+			tag=$(latest_github_tag "https://github.com/imputnet/helium-linux/releases/latest")
+			LATEST_VER=$tag
+			api="https://api.github.com/repos/imputnet/helium-linux/releases/tags/$tag"
+			set -- $(github_sums "$api" 'x86_64_linux\\.tar\\.xz$' 'arm64_linux\\.tar\\.xz$')
+			SUM_X86=$1; SUM_ARM=$2
+			;;
+		chatgpt-desktop)
+			set -- $(apt_latest "https://persistent.oaistatic.com/codex-app-prod/linux/deb" "chatgpt")
+			LATEST_VER=$1; SUM_X86=$2; SUM_ARM=$3
+			;;
+		claude-desktop)
+			set -- $(apt_latest "https://downloads.claude.ai/claude-desktop/apt/stable" "claude-desktop")
+			LATEST_VER=$1; SUM_X86=$2; SUM_ARM=$3
+			;;
+	esac
+	[ -n "${LATEST_VER:-}" ] || { echo "Failed to resolve version for $1." >&2; return 1; }
+}
+
+install_repo_args() { # $1=pkgname -> prints repo flag(s)
+	case "$1" in
+		chatgpt-desktop|claude-desktop) printf '%s' "--repository=hostdir/binpkgs/nonfree" ;;
+		*) printf '%s' "--repository=hostdir/binpkgs" ;;
+	esac
+}
+
+# --- 2+3. check/bump customs ----------------------------------------------
+BUILT=""
+for pkg in $CUSTOM_PKGS; do
+	case "$PKGS" in
+		*" $pkg "*) ;;
+		*) continue ;;
+	esac
+	tmpl="$DISTDIR/srcpkgs/$pkg/template"
+	cur=$(template_version "$tmpl")
+	resolve_pkg "$pkg"
+	if [ "$CHECK_ONLY" -eq 1 ]; then
+		if [ "$cur" = "$LATEST_VER" ]; then
+			echo "$pkg: up to date ($cur)"
+		else
+			echo "$pkg: $cur -> $LATEST_VER"
+		fi
+		continue
+	fi
+	if [ "$cur" = "$LATEST_VER" ]; then
+		echo "$pkg: up to date ($cur)"
+		continue
+	fi
+	echo "$pkg: $cur -> $LATEST_VER"
+	bump_version "$tmpl" "$LATEST_VER"
+	patch_checksums "$tmpl" "$SUM_X86" "$SUM_ARM"
+	echo "$pkg: template bumped (revision reset to 1)"
+	BUILT="$BUILT $pkg"
+done
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+	exit 0
+fi
+
+# --- 4. build ----------------------------------------------------------------
+if [ "$SKIP_BUILD" -eq 1 ]; then
+	[ -n "$BUILT" ] && echo "Bump-only (--skip-build); outdated:$BUILT"
+	exit 0
+fi
+if [ -z "$BUILT" ]; then
+	echo "All custom templates current; nothing to build."
+else
+	for pkg in $BUILT; do
+		(cd "$DISTDIR" && ./xbps-src pkg "$pkg") || exit 1
+		echo "Built $pkg"
+	done
+fi
+
+# --- 5. install ---------------------------------------------------------------
+if [ "$SKIP_INSTALL" -eq 1 ] || [ -z "$BUILT" ]; then
+	exit 0
+fi
+for pkg in $BUILT; do
+	# shellcheck disable=SC2086
+	(cd "$DISTDIR" && sudo xbps-install $(install_repo_args "$pkg") -y "$pkg") || exit 1
+	echo "Installed $pkg"
+done
