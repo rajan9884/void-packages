@@ -9,7 +9,10 @@
 #                [--skip-install] [--check-only] [pkg ...]
 #
 #   no args ......... sync official + bump/build/install all 5 customs
-#   pkg args ........ restrict to named customs (e.g. vp-sync zen-browser)
+#                     (installs only customs already installed on this
+#                     system; see step 5)
+#   pkg args ........ restrict to named customs (e.g. vp-sync zen-browser);
+#                     named pkgs are installed even if not yet installed
 #   --skip-sync ..... don't fetch/rebase origin/master
 #   --skip-bootstrap  don't refresh ./xbps-src binary-bootstrap
 #   --skip-build .... bump templates only, no ./xbps-src pkg
@@ -26,6 +29,22 @@
 #      template version=, patch version=/revision=/checksum= if outdated
 #   4. ./xbps-src pkg <outdated customs>
 #   5. sudo xbps-install --repository=hostdir/binpkgs[ /nonfree] <pkgs>
+#      (only pkgs already installed on this system, or pkgs named
+#      explicitly on the command line — a custom you never installed is
+#      bumped+built but NOT installed behind your back)
+#
+# Official system packages are never touched; run `sudo xbps-install -Su`
+# separately for those. Stay on the `custom` branch — no manual branch
+# switching: step 1 rebases it onto origin/master automatically. Keep
+# `master` pristine (never commit customs there).
+#
+# Adding a new custom package:
+#   1. mkdir srcpkgs/<pkg>/ (+ template, update file, files/ as needed)
+#   2. extend CUSTOM_PKGS above and add a resolve_pkg case
+#      (github-release or APT-index pattern) + repo mapping in
+#      install_repo_args if it is restricted/nonfree
+#   3. git add srcpkgs/<pkg> && git commit (on `custom`)
+#   4. vp-sync <pkg>   # explicit name => builds AND installs it
 
 set -eu
 
@@ -37,6 +56,7 @@ SKIP_BUILD=0
 SKIP_INSTALL=0
 CHECK_ONLY=0
 PKGS=""
+WANT="" # pkgs named explicitly on the command line (always installed)
 
 for arg in "$@"; do
 	case "$arg" in
@@ -53,7 +73,7 @@ for arg in "$@"; do
 		-*) echo "Unknown option: $arg (see --help)" >&2; exit 1 ;;
 		*)
 			case " $CUSTOM_PKGS " in
-				*" $arg "*) PKGS="$PKGS $arg" ;;
+				*" $arg "*) PKGS="$PKGS $arg"; WANT="$WANT $arg " ;;
 				*) echo "Unknown package: $arg (one of:$CUSTOM_PKGS)" >&2; exit 1 ;;
 			esac
 			;;
@@ -265,10 +285,22 @@ else
 fi
 
 # --- 5. install ---------------------------------------------------------------
+# Install only what is already installed (or explicitly named): a custom
+# that was bumped+built but was never installed stays in
+# hostdir/binpkgs without touching the live system.
 if [ "$SKIP_INSTALL" -eq 1 ] || [ -z "$BUILT" ]; then
 	exit 0
 fi
 for pkg in $BUILT; do
+	case " $WANT " in
+		*" $pkg "*) want=1 ;;
+		*) want=0 ;;
+	esac
+	if [ "$want" -eq 0 ] && ! xbps-query -S "$pkg" >/dev/null 2>&1; then
+		echo "$pkg: built but not installed on this system; skipping install"
+		echo "      (run \`vp-sync $pkg\` to install it)"
+		continue
+	fi
 	# shellcheck disable=SC2086
 	(cd "$DISTDIR" && sudo xbps-install $(install_repo_args "$pkg") -y "$pkg") || exit 1
 	echo "Installed $pkg"
