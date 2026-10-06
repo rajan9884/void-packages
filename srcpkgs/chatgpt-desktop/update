@@ -1,0 +1,2 @@
+site="https://persistent.oaistatic.com/codex-app-prod/linux/deb/dists/stable/main/binary-amd64/Packages"
+pattern="chatgpt_\K[0-9.]+(?=_amd64\.deb)"
