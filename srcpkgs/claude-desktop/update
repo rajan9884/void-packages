@@ -1,0 +1,2 @@
+site="https://downloads.claude.ai/claude-desktop/apt/stable/dists/stable/main/binary-amd64/Packages"
+pattern="claude-desktop_\K[0-9.]+(?=_amd64\.deb)"
