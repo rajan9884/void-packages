@@ -1,0 +1,2 @@
+site="https://github.com/storytold/wordcraft/releases"
+pattern="releases/tag/v\K[0-9.]+(?=\")"

@@ -1,0 +1,46 @@
+# Template file for 'wordcraft'
+# Binary repack of official upstream storytold .deb packages, same pattern as
+# ../claude-desktop (itself modeled on srcpkgs/google-chrome and srcpkgs/vivaldi:
+# upstream ships a .deb, xbps-src extracts it, files are installed verbatim from usr/).
+# Upstream publishes x86_64/aarch64 .debs on GitHub releases
+# (https://github.com/storytold/wordcraft/releases); checksums below
+# are the sha256: digests from the GitHub release API.
+pkgname=wordcraft
+version=0.6.1
+revision=1
+archs="x86_64 aarch64"
+depends="desktop-file-utils hicolor-icon-theme libxkbcommon vulkan-loader"
+short_desc="Open-source native word processor, Word alternative"
+maintainer="Rajan Jaiswal <rajan.dev.jaiswal@gmail.com>"
+license="MIT, Apache-2.0"
+homepage="https://getartcraft.com/apps/wordcraft"
+changelog="https://github.com/storytold/wordcraft/releases"
+nostrip=yes
+# The .deb's data.tar contains only a single top-level dir (usr/). Without
+# this, do-extract would rename that lone usr/ to $wrksrc and `vcopy usr /`
+# below would fail (same reason srcpkgs/spotify sets it).
+create_wrksrc=yes
+case "$XBPS_TARGET_MACHINE" in
+x86_64)
+	distfiles="https://github.com/storytold/wordcraft/releases/download/v${version}/wordcraft-${version}-linux-x86_64.deb"
+	checksum=7c86f97e43cc24eae765de431f9d924cc19370c0cbac2ebd108d732386220508
+	;;
+aarch64*)
+	distfiles="https://github.com/storytold/wordcraft/releases/download/v${version}/wordcraft-${version}-linux-aarch64.deb"
+	checksum=165e5c0634d6a8f9ecc312792e85f6d9ceea034267365ba3681b6a764c2403c7
+	;;
+*)
+	broken="No upstream .deb for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
+	;;
+esac
+
+do_install() {
+	# The .deb extracts to usr/bin/wordcraft + usr/bin/wordcraft-cli,
+	# plus desktop file, icons, MIME info and docs under usr/share.
+	vcopy usr /
+}
+
+post_install() {
+	vlicense usr/share/doc/wordcraft/LICENSE-MIT
+	vlicense usr/share/doc/wordcraft/LICENSE-APACHE
+}
