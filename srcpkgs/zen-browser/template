@@ -3,7 +3,7 @@
 # binary-repack pattern from srcpkgs/vivaldi, srcpkgs/google-chrome,
 # srcpkgs/discord (official upstream tarballs, install to /opt).
 pkgname=zen-browser
-version=1.23b
+version=1.23.2b
 revision=1
 archs="x86_64 aarch64"
 depends="alsa-lib dbus-glib ffmpeg gtk+3 hicolor-icon-theme desktop-file-utils
@@ -16,11 +16,11 @@ changelog="https://github.com/zen-browser/desktop/releases"
 case "$XBPS_TARGET_MACHINE" in
 x86_64)
 	distfiles="https://github.com/zen-browser/desktop/releases/download/${version}/zen.linux-x86_64.tar.xz"
-	checksum=9ad79f50f52a60b85f1a0787de227235934ea0bd994f79b739fa806081b3fcf0
+	checksum=5e67f4fa081b1b437243c464449ea1bd2a3b15b6f932487a8aa0c25aa8514600
 	;;
 aarch64*)
 	distfiles="https://github.com/zen-browser/desktop/releases/download/${version}/zen.linux-aarch64.tar.xz"
-	checksum=4774631868db53163bfecff457b9440e55cc04f24d4c3168df67722409a0bef2
+	checksum=96971f099c0adeae6a2edb4e128596d0706df974ac279b5ecde2aa93b07621d8
 	;;
 *)
 	broken="No upstream tarball for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
