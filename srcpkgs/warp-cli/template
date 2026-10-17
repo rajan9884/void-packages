@@ -33,6 +33,6 @@ esac
 do_install() {
 	# The .deb ships warp-cli + warp-svc under bin/ (warp-cli needs
 	# warp-svc running to manage the WireGuard interface).
-	vcopy bin/warp-cli usr/bin
-	vcopy bin/warp-svc usr/bin
+	vbin bin/warp-cli
+	vbin bin/warp-svc
 }
