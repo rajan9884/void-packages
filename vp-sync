@@ -48,7 +48,7 @@
 
 set -eu
 
-CUSTOM_PKGS="zen-browser zed-editor helium-browser chatgpt-desktop claude-desktop wordcraft"
+CUSTOM_PKGS="zen-browser zed-editor helium-browser chatgpt-desktop claude-desktop wordcraft cloudflare-warp"
 
 SKIP_SYNC=0
 SKIP_BOOTSTRAP=0
@@ -170,9 +170,9 @@ latest_github_tag() { # $1=releases/latest url -> prints tag
 
 # APT index lookup: $1=base_url $2=pkg_prefix -> prints "ver x86_sum arm_sum"
 apt_latest() {
-	base="$1"; prefix="$2"
-	amd64=$(curl -sL "$base/dists/stable/main/binary-amd64/Packages")
-	arm64=$(curl -sL "$base/dists/stable/main/binary-arm64/Packages")
+	base="$1"; prefix="$2"; dist="${3:-stable}"
+	amd64=$(curl -sL "$base/dists/$dist/main/binary-amd64/Packages")
+	arm64=$(curl -sL "$base/dists/$dist/main/binary-arm64/Packages")
 	latest_amd64=$(printf '%s\n' "$amd64" |
 		awk -v p="$prefix" '/^Version:/ { ver = $2 } $0 ~ "^Filename: .*/"p"_" { file = $2 } /^SHA256:/ { if (ver != "" && file != "") print ver " " file " " $2 }' |
 		sort -V | tail -n 1)
@@ -232,6 +232,10 @@ resolve_pkg() { # $1=pkgname
 			api="https://api.github.com/repos/storytold/wordcraft/releases/tags/$tag"
 			set -- $(github_sums "$api" '^wordcraft-.*-linux-x86_64\\.deb$' '^wordcraft-.*-linux-aarch64\\.deb$')
 			SUM_X86=$1; SUM_ARM=$2
+			;;
+		cloudflare-warp)
+			set -- $(apt_latest "https://pkg.cloudflareclient.com" "cloudflare-warp" "focal")
+			LATEST_VER=$1; SUM_X86=$2; SUM_ARM=$3
 			;;
 	esac
 	[ -n "${LATEST_VER:-}" ] || { echo "Failed to resolve version for $1." >&2; return 1; }
