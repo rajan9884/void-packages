@@ -4,7 +4,7 @@
 # (https://pkg.cloudflareclient.com/); checksums below
 # are the SHA256 lines from the binary-amd64 / binary-arm64 Packages indexes.
 pkgname=cloudflare-warp
-version=0.0.0
+version=2026.3.846.0
 revision=1
 archs="x86_64 aarch64"
 depends="dbus-libs glibc iproute2 nftables gnupg desktop-file-utils libcap-progs nss ca-certificates libpcap"
@@ -44,5 +44,5 @@ do_install() {
 }
 
 post_install() {
-	vlicense usr/share/doc/cloudflare-warp/copyright
+	[ -f usr/share/doc/cloudflare-warp/copyright ] && vlicense usr/share/doc/cloudflare-warp/copyright
 }
