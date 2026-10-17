@@ -48,7 +48,7 @@
 
 set -eu
 
-CUSTOM_PKGS="zen-browser zed-editor helium-browser chatgpt-desktop claude-desktop wordcraft"
+CUSTOM_PKGS="zen-browser zed-editor helium-browser chatgpt-desktop claude-desktop wordcraft warp-cli"
 
 SKIP_SYNC=0
 SKIP_BOOTSTRAP=0
@@ -232,6 +232,13 @@ resolve_pkg() { # $1=pkgname
 			api="https://api.github.com/repos/storytold/wordcraft/releases/tags/$tag"
 			set -- $(github_sums "$api" '^wordcraft-.*-linux-x86_64\\.deb$' '^wordcraft-.*-linux-aarch64\\.deb$')
 			SUM_X86=$1; SUM_ARM=$2
+			;;
+		warp-cli)
+			amd64=$(curl -sL "https://pkg.cloudflareclient.com/dists/focal/main/binary-amd64/Packages")
+			arm64=$(curl -sL "https://pkg.cloudflareclient.com/dists/focal/main/binary-arm64/Packages")
+			LATEST_VER=$(printf '%s\n' "$amd64" | awk '/^Version:/ { print $2; exit }')
+			SUM_X86=$(printf '%s\n' "$amd64" | awk '/^SHA256:/ { print $2; exit }')
+			SUM_ARM=$(printf '%s\n' "$arm64" | awk '/^SHA256:/ { print $2; exit }')
 			;;
 	esac
 	[ -n "${LATEST_VER:-}" ] || { echo "Failed to resolve version for $1." >&2; return 1; }

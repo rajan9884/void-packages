@@ -1,0 +1,38 @@
+# Template file for 'warp-cli'
+# Binary repack of upstream Cloudflare WARP .deb (warp-cli + warp-svc only).
+# warp-cli talks to warp-svc over a unix socket/D-Bus, so both binaries are
+# packaged from the same cloudflare-warp .deb.
+# Upstream publishes amd64/arm64 .debs in its own APT repository
+# (https://pkg.cloudflareclient.com/); checksums below
+# are the SHA256 lines from the binary-amd64 / binary-arm64 Packages indexes.
+pkgname=warp-cli
+version=2026.3.846.0
+revision=1
+archs="x86_64 aarch64"
+depends="dbus-libs glibc iproute2 nftables gnupg ca-certificates libcap-progs nss libpcap"
+short_desc="Cloudflare WARP CLI client"
+maintainer="Rajan Jaiswal <rajan.dev.jaiswal@gmail.com>"
+license="unknown"
+homepage="https://1.1.1.1"
+changelog="https://pkg.cloudflareclient.com/"
+nostrip=yes
+case "$XBPS_TARGET_MACHINE" in
+x86_64)
+	distfiles="https://pkg.cloudflareclient.com/pool/focal/main/c/cloudflare-warp/cloudflare-warp_${version}_amd64.deb"
+	checksum=339405a6601e0a30f7e82155b0fff5f1cdd9dfefb2f23a2f01494bc39d489aee
+	;;
+aarch64*)
+	distfiles="https://pkg.cloudflareclient.com/pool/focal/main/c/cloudflare-warp/cloudflare-warp_${version}_arm64.deb"
+	checksum=54cc0e21daf30486afb26809e5b83d86f06761fae754370a279e2fed31c08cef
+	;;
+*)
+	broken="No upstream .deb for $XBPS_TARGET_MACHINE (only amd64/arm64 are provided)"
+	;;
+esac
+
+do_install() {
+	# The .deb ships warp-cli + warp-svc under bin/ (warp-cli needs
+	# warp-svc running to manage the WireGuard interface).
+	vcopy bin/warp-cli usr/bin
+	vcopy bin/warp-svc usr/bin
+}
