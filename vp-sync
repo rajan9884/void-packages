@@ -27,8 +27,13 @@
 #   3. for each custom pkg: resolve latest upstream version (GitHub
 #      releases/latest redirect or APT Packages index), compare with
 #      template version=, patch version=/revision=/checksum= if outdated
-#   4. ./xbps-src pkg <outdated customs>
-#   5. sudo xbps-install --repository=hostdir/binpkgs[ /nonfree] <pkgs>
+#   3b. commit the bumped templates on the current branch (before the
+#       build, so a later failure still leaves a clean working tree)
+#   4. ./xbps-src pkg <outdated customs>  (output goes to
+#      hostdir/binpkgs/<branch>[/nonfree] -- xbps-src names the build
+#      repo after the git branch whenever it isn't master)
+#   5. sudo xbps-install --repository=hostdir/binpkgs[/branch][/nonfree]
+#      <pkgs>
 #      (only pkgs already installed on this system, or pkgs named
 #      explicitly on the command line — a custom you never installed is
 #      bumped+built but NOT installed behind your back)
@@ -86,6 +91,14 @@ PKGS=" $PKGS "
 
 DISTDIR="${XBPS_DISTDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
 export XBPS_DISTDIR="$DISTDIR"
+# xbps-src puts built binpkgs in hostdir/binpkgs/<branch>[/nonfree] when
+# the branch isn't master (XBPS_ALT_REPOSITORY defaults to the branch
+# name); point the install step at the same place we build into.
+REPO_BASE="$DISTDIR/hostdir/binpkgs"
+_cur_branch=$(git -C "$DISTDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)
+if [ -n "$_cur_branch" ] && [ "$_cur_branch" != "master" ]; then
+	REPO_BASE="$REPO_BASE/$_cur_branch"
+fi
 # restricted=yes templates (chatgpt/claude) need this; harmless for the rest.
 export XBPS_ALLOW_RESTRICTED=yes
 command -v curl >/dev/null || { echo "curl is required." >&2; exit 1; }
@@ -120,20 +133,31 @@ elif [ "$SKIP_BOOTSTRAP" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
 fi
 
 # --- shared helpers -------------------------------------------------------
+is_sha256() { # $1 -> 0 if it looks like a sha256 hex digest
+	case "$1" in
+		????????????????????????????????????????????????????????????????) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*[!0-9a-fA-F]*) return 1 ;;
+	esac
+	return 0
+}
+
 bump_version() { # $1=template $2=new_version
 	sed -i 's/^version=[a-zA-Z0-9.+]\+/version='"$2"'/' "$1"
 	sed -i 's/^revision=.*/revision=1/' "$1"
 }
 
 patch_checksums() { # $1=template $2=x86_sum $3=arm_sum
-	case "$2" in
-		????????????????????????????????????????????????????????????????) ;;
-		*) echo "Bad x86_64 checksum for $1." >&2; return 1 ;;
-	esac
-	case "$3" in
-		????????????????????????????????????????????????????????????????) ;;
-		*) echo "Bad aarch64 checksum for $1." >&2; return 1 ;;
-	esac
+	if ! is_sha256 "$2"; then
+		echo "Bad x86_64 checksum for $1." >&2
+		return 1
+	fi
+	if ! is_sha256 "$3"; then
+		echo "Bad aarch64 checksum for $1." >&2
+		return 1
+	fi
 	tmpfile="$1.new.$$"
 	awk -v x86="$2" -v arm="$3" '
 		/^x86_64/ { branch = "x86" }
@@ -151,7 +175,11 @@ patch_checksums() { # $1=template $2=x86_sum $3=arm_sum
 # GitHub digest lookup: $1=api_url $2=x86_awk_pattern $3=arm_awk_pattern
 # prints "x86_sum arm_sum"
 github_sums() {
-	curl -sL "$1" | awk -F'"' -v xpat="$2" -v apat="$3" '
+	if ! json=$(curl -fsSL "$1"); then
+		echo "Failed to fetch $1" >&2
+		return 1
+	fi
+	printf '%s\n' "$json" | awk -F'"' -v xpat="$2" -v apat="$3" '
 		$2 == "name" && ($4 ~ xpat || $4 ~ apat) {
 			if ($4 ~ xpat) pending_x = $4; else pending_a = $4
 		}
@@ -164,15 +192,19 @@ github_sums() {
 }
 
 latest_github_tag() { # $1=releases/latest url -> prints tag
-	release_url=$(curl -Ls -o /dev/null -w '%{url_effective}' "$1")
+	release_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$1") || return 1
 	basename "$release_url"
 }
 
-# APT index lookup: $1=base_url $2=pkg_prefix -> prints "ver x86_sum arm_sum"
+# APT index lookup: $1=base_url $2=pkg_prefix [3=dist, default "stable"]
+# -> prints "ver x86_sum arm_sum"
 apt_latest() {
-	base="$1"; prefix="$2"
-	amd64=$(curl -sL "$base/dists/stable/main/binary-amd64/Packages")
-	arm64=$(curl -sL "$base/dists/stable/main/binary-arm64/Packages")
+	base="$1"; prefix="$2"; dist="${3:-stable}"
+	if ! amd64=$(curl -fsSL "$base/dists/$dist/main/binary-amd64/Packages") ||
+	   ! arm64=$(curl -fsSL "$base/dists/$dist/main/binary-arm64/Packages"); then
+		echo "Failed to fetch APT index from $base (dist $dist)" >&2
+		return 1
+	fi
 	latest_amd64=$(printf '%s\n' "$amd64" |
 		awk -v p="$prefix" '/^Version:/ { ver = $2 } $0 ~ "^Filename: .*/"p"_" { file = $2 } /^SHA256:/ { if (ver != "" && file != "") print ver " " file " " $2 }' |
 		sort -V | tail -n 1)
@@ -183,6 +215,10 @@ apt_latest() {
 	ver_arm=$(printf '%s\n' "$latest_arm64" | awk '{ print $1 }')
 	sum64=$(printf '%s\n' "$latest_amd64" | awk '{ print $3 }')
 	sumarm=$(printf '%s\n' "$latest_arm64" | awk '{ print $3 }')
+	if [ -z "$ver" ] || [ -z "$sum64" ] || [ -z "$sumarm" ]; then
+		echo "No '$prefix' entry in $base/dists/$dist Packages index." >&2
+		return 1
+	fi
 	if [ "$ver" != "$ver_arm" ]; then
 		echo "Note: amd64 ($ver) and arm64 ($ver_arm) differ; using amd64." >&2
 	fi
@@ -196,27 +232,33 @@ template_version() { # $1=template -> prints version=
 # Resolve latest version+checksums per package.
 # Sets globals: LATEST_VER, SUM_X86, SUM_ARM.
 resolve_pkg() { # $1=pkgname
+	# reset: these are globals, and a failed lookup must not inherit the
+	# previous package's values (that would bump a template to the wrong
+	# version).
+	LATEST_VER=""
+	SUM_X86=""
+	SUM_ARM=""
 	case "$1" in
 		zen-browser)
 			tag=$(latest_github_tag "https://github.com/zen-browser/desktop/releases/latest")
 			LATEST_VER=$(printf '%s' "$tag" | sed 's/-//g')
 			api="https://api.github.com/repos/zen-browser/desktop/releases/tags/$tag"
 			set -- $(github_sums "$api" '^zen\\.linux-x86_64\\.tar\\.xz$' '^zen\\.linux-aarch64\\.tar\\.xz$')
-			SUM_X86=$1; SUM_ARM=$2
+			SUM_X86=${1:-}; SUM_ARM=${2:-}
 			;;
 		zed-editor)
 			tag=$(latest_github_tag "https://github.com/zed-industries/zed/releases/latest")
 			LATEST_VER=$(printf '%s' "$tag" | sed 's/^v//')
 			api="https://api.github.com/repos/zed-industries/zed/releases/tags/$tag"
 			set -- $(github_sums "$api" '^zed-linux-x86_64\\.tar\\.gz$' '^zed-linux-aarch64\\.tar\\.gz$')
-			SUM_X86=$1; SUM_ARM=$2
+			SUM_X86=${1:-}; SUM_ARM=${2:-}
 			;;
 		helium-browser)
 			tag=$(latest_github_tag "https://github.com/imputnet/helium-linux/releases/latest")
 			LATEST_VER=$tag
 			api="https://api.github.com/repos/imputnet/helium-linux/releases/tags/$tag"
 			set -- $(github_sums "$api" 'x86_64_linux\\.tar\\.xz$' 'arm64_linux\\.tar\\.xz$')
-			SUM_X86=$1; SUM_ARM=$2
+			SUM_X86=${1:-}; SUM_ARM=${2:-}
 			;;
 		chatgpt-desktop)
 			set -- $(apt_latest "https://persistent.oaistatic.com/codex-app-prod/linux/deb" "chatgpt")
@@ -231,23 +273,30 @@ resolve_pkg() { # $1=pkgname
 			LATEST_VER=$(printf '%s' "$tag" | sed 's/^v//')
 			api="https://api.github.com/repos/storytold/wordcraft/releases/tags/$tag"
 			set -- $(github_sums "$api" '^wordcraft-.*-linux-x86_64\\.deb$' '^wordcraft-.*-linux-aarch64\\.deb$')
-			SUM_X86=$1; SUM_ARM=$2
+			SUM_X86=${1:-}; SUM_ARM=${2:-}
 			;;
 		warp-cli)
-			amd64=$(curl -sL "https://pkg.cloudflareclient.com/dists/focal/main/binary-amd64/Packages")
-			arm64=$(curl -sL "https://pkg.cloudflareclient.com/dists/focal/main/binary-arm64/Packages")
-			LATEST_VER=$(printf '%s\n' "$amd64" | awk '/^Version:/ { print $2; exit }')
-			SUM_X86=$(printf '%s\n' "$amd64" | awk '/^SHA256:/ { print $2; exit }')
-			SUM_ARM=$(printf '%s\n' "$arm64" | awk '/^SHA256:/ { print $2; exit }')
+			# Same cloudflare-warp .deb the template downloads, but the
+			# APT suite is "focal" (not "stable").
+			set -- $(apt_latest "https://pkg.cloudflareclient.com" "cloudflare-warp" "focal")
+			LATEST_VER=${1:-}; SUM_X86=${2:-}; SUM_ARM=${3:-}
 			;;
 	esac
-	[ -n "${LATEST_VER:-}" ] || { echo "Failed to resolve version for $1." >&2; return 1; }
+	if [ -z "$LATEST_VER" ]; then
+		echo "Failed to resolve version for $1." >&2
+		return 1
+	fi
+	if ! is_sha256 "$SUM_X86" || ! is_sha256 "$SUM_ARM"; then
+		echo "Failed to resolve checksums for $1 (got '$SUM_X86' / '$SUM_ARM')." >&2
+		return 1
+	fi
 }
 
 install_repo_args() { # $1=pkgname -> prints repo flag(s)
+	# $REPO_BASE mirrors where xbps-src dropped the build (see top).
 	case "$1" in
-		chatgpt-desktop|claude-desktop) printf '%s' "--repository=hostdir/binpkgs/nonfree" ;;
-		*) printf '%s' "--repository=hostdir/binpkgs" ;;
+		chatgpt-desktop|claude-desktop) printf '%s' "--repository=$REPO_BASE/nonfree" ;;
+		*) printf '%s' "--repository=$REPO_BASE" ;;
 	esac
 }
 
@@ -284,6 +333,24 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 	exit 0
 fi
 
+# Commit the bumps: step 1 refuses to run on a dirty tree, and bumping
+# without committing made every *subsequent* run abort with
+# "Working tree dirty ...; commit/stash first". Only the templates we
+# just touched are staged. Done before the build so even a failed build
+# leaves a clean tree.
+if [ -n "$BUILT" ]; then
+	bump_msg="custom: bump"
+	for pkg in $BUILT; do
+		git -C "$DISTDIR" add "srcpkgs/$pkg/template"
+		bump_msg="$bump_msg $pkg $(template_version "$DISTDIR/srcpkgs/$pkg/template")"
+	done
+	if ! git -C "$DISTDIR" commit -q -m "$bump_msg"; then
+		echo "Failed to commit bumped templates; commit/stash them before rerunning." >&2
+		exit 1
+	fi
+	echo "Committed:$BUILT"
+fi
+
 # --- 4. build ----------------------------------------------------------------
 if [ "$SKIP_BUILD" -eq 1 ]; then
 	[ -n "$BUILT" ] && echo "Bump-only (--skip-build); outdated:$BUILT"
@@ -293,29 +360,50 @@ if [ -z "$BUILT" ]; then
 	echo "All custom templates current; nothing to build."
 else
 	for pkg in $BUILT; do
-		(cd "$DISTDIR" && ./xbps-src pkg "$pkg") || exit 1
+		(cd "$DISTDIR" && ./xbps-src pkg "$pkg") || {
+			echo "Build failed for $pkg (its bump is already committed)." >&2
+			echo "Fix srcpkgs/$pkg/template, then: ./xbps-src pkg $pkg" >&2
+			exit 1
+		}
 		echo "Built $pkg"
 	done
 fi
 
 # --- 5. install ---------------------------------------------------------------
-# Install only what is already installed (or explicitly named): a custom
-# that was bumped+built but was never installed stays in
-# hostdir/binpkgs without touching the live system.
-if [ "$SKIP_INSTALL" -eq 1 ] || [ -z "$BUILT" ]; then
+# Install the newest binary sitting in the build repo for every custom that
+# is installed on this system (or named explicitly). Deliberately NOT limited
+# to $BUILT: a package that was built in an earlier run whose install failed
+# (or a --skip-install run) still gets picked up here, and re-running
+# vp-sync becomes idempotent.
+if [ "$SKIP_INSTALL" -eq 1 ]; then
 	exit 0
 fi
-for pkg in $BUILT; do
+for pkg in $CUSTOM_PKGS; do
+	case "$PKGS" in
+		*" $pkg "*) ;;
+		*) continue ;;
+	esac
 	case " $WANT " in
 		*" $pkg "*) want=1 ;;
 		*) want=0 ;;
 	esac
-	if [ "$want" -eq 0 ] && ! xbps-query -S "$pkg" >/dev/null 2>&1; then
-		echo "$pkg: built but not installed on this system; skipping install"
-		echo "      (run \`vp-sync $pkg\` to install it)"
+	inst_ver=$(xbps-query -p pkgver "$pkg" 2>/dev/null || true)
+	if [ "$want" -eq 0 ] && [ -z "$inst_ver" ]; then
+		continue
+	fi
+	# shellcheck disable=SC2086
+	repo_ver=$(xbps-query $(install_repo_args "$pkg") -p pkgver "$pkg" 2>/dev/null || true)
+	if [ -z "$repo_ver" ]; then
+		echo "$pkg: nothing built in $(install_repo_args "$pkg"); skipping install"
+		continue
+	fi
+	if [ "$repo_ver" = "$inst_ver" ]; then
+		echo "$pkg: already at $inst_ver"
 		continue
 	fi
 	# shellcheck disable=SC2086
 	(cd "$DISTDIR" && sudo xbps-install $(install_repo_args "$pkg") -y "$pkg") || exit 1
-	echo "Installed $pkg"
+	# xbps-install exits 0 even when it did nothing, so report what actually
+	# ended up on disk.
+	echo "Installed $(xbps-query -p pkgver "$pkg" 2>/dev/null || echo "$pkg (missing!)")"
 done
