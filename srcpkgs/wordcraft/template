@@ -6,7 +6,7 @@
 # (https://github.com/storytold/wordcraft/releases); checksums below
 # are the sha256: digests from the GitHub release API.
 pkgname=wordcraft
-version=0.6.1
+version=0.7.0
 revision=1
 archs="x86_64 aarch64"
 depends="desktop-file-utils hicolor-icon-theme libxkbcommon vulkan-loader"
@@ -23,11 +23,11 @@ create_wrksrc=yes
 case "$XBPS_TARGET_MACHINE" in
 x86_64)
 	distfiles="https://github.com/storytold/wordcraft/releases/download/v${version}/wordcraft-${version}-linux-x86_64.deb"
-	checksum=7c86f97e43cc24eae765de431f9d924cc19370c0cbac2ebd108d732386220508
+	checksum=8ff1e2557956a279f56f7d79ee15aa5403aaac26197b1868ea3dc0b61a23344c
 	;;
 aarch64*)
 	distfiles="https://github.com/storytold/wordcraft/releases/download/v${version}/wordcraft-${version}-linux-aarch64.deb"
-	checksum=165e5c0634d6a8f9ecc312792e85f6d9ceea034267365ba3681b6a764c2403c7
+	checksum=844901d6fc32d5bcaacac5d27eb0ebf1d77fe2fe4489dc86019d848ee7a95261
 	;;
 *)
 	broken="No upstream .deb for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
