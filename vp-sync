@@ -8,9 +8,9 @@
 # Usage: vp-sync [--skip-sync] [--skip-bootstrap] [--skip-build]
 #                [--skip-install] [--check-only] [pkg ...]
 #
-#   no args ......... sync official + bump/build/install all 6 customs
-#                     (installs only customs already installed on this
-#                     system; see step 5)
+#   no args ......... sync official + bump/build/install all customs
+#                     (installs the newest build of each custom that is
+#                     already installed on this system; see step 5)
 #   pkg args ........ restrict to named customs (e.g. vp-sync zen-browser);
 #                     named pkgs are installed even if not yet installed
 #   --skip-sync ..... don't fetch/rebase origin/master
@@ -34,9 +34,12 @@
 #      repo after the git branch whenever it isn't master)
 #   5. sudo xbps-install --repository=hostdir/binpkgs[/branch][/nonfree]
 #      <pkgs>
-#      (only pkgs already installed on this system, or pkgs named
-#      explicitly on the command line — a custom you never installed is
-#      bumped+built but NOT installed behind your back)
+#   5b. prune builds superseded in that repo (xbps-install itself never
+#       deletes the .xbps it installed from)
+#
+#   Step 5 only touches customs already installed on this system, or
+#   pkgs named explicitly on the command line -- a custom you never
+#   installed is bumped+built but NOT installed behind your back.
 #
 # Official system packages are never touched; run `sudo xbps-install -Su`
 # separately for those. Stay on the `custom` branch — no manual branch
@@ -302,6 +305,7 @@ install_repo_args() { # $1=pkgname -> prints repo flag(s)
 
 # --- 2+3. check/bump customs ----------------------------------------------
 BUILT=""
+installed_any=0
 for pkg in $CUSTOM_PKGS; do
 	case "$PKGS" in
 		*" $pkg "*) ;;
@@ -406,4 +410,17 @@ for pkg in $CUSTOM_PKGS; do
 	# xbps-install exits 0 even when it did nothing, so report what actually
 	# ended up on disk.
 	echo "Installed $(xbps-query -p pkgver "$pkg" 2>/dev/null || echo "$pkg (missing!)")"
+	installed_any=1
 done
+
+# xbps-install never deletes the .xbps it installed from, so drop the
+# versions that are now superseded in the build repo (keeps only the
+# newest build of each custom). Note: this does not catch a *renamed*
+# package (old pkgname stays indexed) -- remove that .xbps by hand and
+# run `xbps-rindex -c <repodir>`.
+if [ "${installed_any:-0}" -eq 1 ]; then
+	for repo in "$REPO_BASE" "$REPO_BASE/nonfree"; do
+		[ -d "$repo" ] || continue
+		xbps-rindex -r "$repo" || echo "warning: could not prune $repo" >&2
+	done
+fi
