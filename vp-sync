@@ -107,6 +107,11 @@ export XBPS_ALLOW_RESTRICTED=yes
 command -v curl >/dev/null || { echo "curl is required." >&2; exit 1; }
 
 # --- 1. official upstream -----------------------------------------------
+# If specific packages are named on command line, skip rebase unless explicitly requested
+if [ -n "$WANT" ]; then
+	SKIP_SYNC=1
+fi
+
 if [ "$SKIP_SYNC" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
 	if ! git -C "$DISTDIR" diff --quiet || ! git -C "$DISTDIR" diff --cached --quiet; then
 		echo "Working tree dirty in $DISTDIR; commit/stash first." >&2
@@ -313,6 +318,8 @@ install_repo_args() { # $1=pkgname -> prints repo flag(s)
 # --- 2+3. check/bump customs ----------------------------------------------
 BUILT=""
 installed_any=0
+BUMPED=""
+TO_BUILD=""
 for pkg in $CUSTOM_PKGS; do
 	case "$PKGS" in
 		*" $pkg "*) ;;
@@ -321,6 +328,8 @@ for pkg in $CUSTOM_PKGS; do
 	tmpl="$DISTDIR/srcpkgs/$pkg/template"
 	cur=$(template_version "$tmpl")
 	resolve_pkg "$pkg"
+	# shellcheck disable=SC2086
+	repo_ver=$(xbps-query $(install_repo_args "$pkg") -p pkgver "$pkg" 2>/dev/null || true)
 	if [ "$CHECK_ONLY" -eq 1 ]; then
 		if [ "$cur" = "$LATEST_VER" ]; then
 			echo "$pkg: up to date ($cur)"
@@ -330,14 +339,20 @@ for pkg in $CUSTOM_PKGS; do
 		continue
 	fi
 	if [ "$cur" = "$LATEST_VER" ]; then
-		echo "$pkg: up to date ($cur)"
+		if [ -z "$repo_ver" ]; then
+			echo "$pkg: template up to date ($cur), but binary missing from repo; queuing build"
+			TO_BUILD="$TO_BUILD $pkg"
+		else
+			echo "$pkg: up to date ($cur)"
+		fi
 		continue
 	fi
 	echo "$pkg: $cur -> $LATEST_VER"
 	bump_version "$tmpl" "$LATEST_VER"
 	patch_checksums "$tmpl" "$SUM_X86" "$SUM_ARM"
 	echo "$pkg: template bumped (revision reset to 1)"
-	BUILT="$BUILT $pkg"
+	BUMPED="$BUMPED $pkg"
+	TO_BUILD="$TO_BUILD $pkg"
 done
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
@@ -349,9 +364,9 @@ fi
 # "Working tree dirty ...; commit/stash first". Only the templates we
 # just touched are staged. Done before the build so even a failed build
 # leaves a clean tree.
-if [ -n "$BUILT" ]; then
+if [ -n "$BUMPED" ]; then
 	bump_msg="custom: bump"
-	for pkg in $BUILT; do
+	for pkg in $BUMPED; do
 		git -C "$DISTDIR" add "srcpkgs/$pkg/template"
 		bump_msg="$bump_msg $pkg $(template_version "$DISTDIR/srcpkgs/$pkg/template")"
 	done
@@ -359,18 +374,18 @@ if [ -n "$BUILT" ]; then
 		echo "Failed to commit bumped templates; commit/stash them before rerunning." >&2
 		exit 1
 	fi
-	echo "Committed:$BUILT"
+	echo "Committed:$BUMPED"
 fi
 
 # --- 4. build ----------------------------------------------------------------
 if [ "$SKIP_BUILD" -eq 1 ]; then
-	[ -n "$BUILT" ] && echo "Bump-only (--skip-build); outdated:$BUILT"
+	[ -n "$TO_BUILD" ] && echo "Bump-only (--skip-build); outdated:$TO_BUILD"
 	exit 0
 fi
-if [ -z "$BUILT" ]; then
-	echo "All custom templates current; nothing to build."
+if [ -z "$TO_BUILD" ]; then
+	echo "All custom packages current and built; nothing to build."
 else
-	for pkg in $BUILT; do
+	for pkg in $TO_BUILD; do
 		(cd "$DISTDIR" && ./xbps-src pkg "$pkg") || {
 			echo "Build failed for $pkg (its bump is already committed)." >&2
 			echo "Fix srcpkgs/$pkg/template, then: ./xbps-src pkg $pkg" >&2
