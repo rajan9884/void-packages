@@ -7,7 +7,7 @@
 # (https://github.com/storytold/deckcraft/releases); checksums below
 # are the sha256: digests from the GitHub release API.
 pkgname=deckcraft
-version=0.12.0
+version=0.14.1
 revision=1
 archs="x86_64 aarch64"
 depends="desktop-file-utils hicolor-icon-theme libxkbcommon vulkan-loader alsa-lib"
@@ -24,11 +24,11 @@ create_wrksrc=yes
 case "$XBPS_TARGET_MACHINE" in
 x86_64)
 	distfiles="https://github.com/storytold/deckcraft/releases/download/v${version}/deckcraft-${version}-linux-x86_64.deb"
-	checksum=320e5bef41fdb10410d2166c419ac6b2dfabcba171c637a26dc5b3747e29b8d4
+	checksum=d17ffd935f8ae3c8e9790648a00d4d019f11b52bf5db207ec6e4d466a108ec2f
 	;;
 aarch64*)
 	distfiles="https://github.com/storytold/deckcraft/releases/download/v${version}/deckcraft-${version}-linux-aarch64.deb"
-	checksum=b6ffde3350923f9776e1f950ef2edb0c95627728c10411b90e1ded092e9afa57
+	checksum=bb90fc843c852109abd48e42750fcfd52197d91ea6469d8f3d768b6a3b28eff6
 	;;
 *)
 	broken="No upstream .deb for $XBPS_TARGET_MACHINE (only x86_64/aarch64 are provided)"
