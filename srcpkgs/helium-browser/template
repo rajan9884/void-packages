@@ -7,7 +7,7 @@
 # (alsa-lib dbus gtk3 hicolor-icon-theme libcups libpulse libva libxss
 #  nss ttf-liberation udev xdg-utils); the rest is pulled in via shlibs.
 pkgname=helium-browser
-version=0.19.4.1
+version=0.20.3.1
 revision=1
 archs="x86_64 aarch64"
 depends="alsa-lib dbus desktop-file-utils gtk+3 hicolor-icon-theme libcups
@@ -20,11 +20,11 @@ changelog="https://github.com/imputnet/helium-linux/releases"
 case "$XBPS_TARGET_MACHINE" in
 x86_64)
 	distfiles="https://github.com/imputnet/helium-linux/releases/download/${version}/helium-${version}-x86_64_linux.tar.xz"
-	checksum=6ca6e4a00fef5916821fb1af8a9607cc6b386f678a7eb422e55f19116ba30469
+	checksum=3759ea4e95bf4ef4a0a6477e3d73576b0f03906f2e80357275bfc6cacafb5fac
 	;;
 aarch64*)
 	distfiles="https://github.com/imputnet/helium-linux/releases/download/${version}/helium-${version}-arm64_linux.tar.xz"
-	checksum=63137674429e2f94bb03b65b254de0af3f6440a95ea6067a4d7c0cd63ac9cf96
+	checksum=f42fe851b26e1604c77399463968409ad68952a3a1808797e361189b31a4ea08
 	;;
 *)
 	broken="No upstream tarball for $XBPS_TARGET_MACHINE (only x86_64/arm64 are provided)"
